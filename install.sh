@@ -31,7 +31,7 @@ if [ ! -d ~/.insightface/models/buffalo_l ]; then
   unzip ~/.insightface/models/buffalo_l.zip -d ~/.insightface/models/buffalo_l
 fi
 
-echo -e "\nInstalling conda env..."
-conda env create -f environment.yml
+# echo -e "\nInstalling conda env..."
+# python3 -m env create -f environment.yml
 
 echo -e "\nInstallation has finished!"

@@ -1,0 +1,42 @@
+input_video: '/media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/datasets/2d/moi/VID_20230719_121349884.mp4'
+output: null
+
+mica_estimator_kwargs:
+  chkp_path: "/media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/libs/MICA/data/pretrained/mica.tar"
+
+video_dataset_kwargs:
+  filepath: '/media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/datasets/2d/moi/VID_20230719_121349884.mp4'
+  preload: true
+  scale_factor: 2
+
+
+flame_pose_expression_optimization_kwargs:
+  face_parsing_kwargs:
+    mp_face_mesh_detector_kwargs:
+      max_num_faces: 1
+      min_detection_conf: 0.5
+  
+  flame_model_cfg:
+    flame_model_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/FLAME2023/flame2023.pkl
+    batch_size: 1
+    use_face_contour: false
+    shape_params: 300
+    expression_params: 100
+    use_3D_translation: false
+    static_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/flame_static_embedding.pkl
+    dynamic_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/flame_dynamic_embedding.npy
+    mediapipe_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/mediapipe_landmark_embedding/mediapipe_landmark_embedding.npz
+  
+  loss_kwargs:
+    w: 1.0
+  
+  optim_kwargs:
+    lr: 1.0e-2
+    betas: [0.9, 0.999]
+  
+  sched_kwargs:
+    milestones: [200, 300, 500]
+    gamma: 0.5
+  
+  logger_kwargs:
+    filepath: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/datasets/2d/moi/log.txt
