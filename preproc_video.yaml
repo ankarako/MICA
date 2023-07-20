@@ -11,10 +11,17 @@ video_dataset_kwargs:
 
 
 flame_pose_expression_optimization_kwargs:
+  cam_init_z_trans: 0.5
+
   face_parsing_kwargs:
+    use_fan: true
     mp_face_mesh_detector_kwargs:
       max_num_faces: 1
       min_detection_conf: 0.5
+    face_segmentor_kwargs:
+      threshold: 0.8
+      chkp: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/libs/face_parsing/ibug/face_parsing/rtnet/weights/rtnet50-fcn-11.torch
+      nclasses: 11
   
   flame_model_cfg:
     flame_model_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/FLAME2023/flame2023.pkl
@@ -26,17 +33,29 @@ flame_pose_expression_optimization_kwargs:
     static_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/flame_static_embedding.pkl
     dynamic_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/flame_dynamic_embedding.npy
     mediapipe_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/mediapipe_landmark_embedding/mediapipe_landmark_embedding.npz
+    flame_masks: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/FLAME_masks/FLAME_masks.pkl
   
   loss_kwargs:
-    w: 1.0
+    wing_loss_kwargs: 
+      omega: 10.0
+      eps: 2.0
+    adaptive_wing_loss_kwargs: null
+      # omega: 24
+      # theta: 0.5
+      # eps: 1.0
+      # alpha: 2.1
   
   optim_kwargs:
     lr: 1.0e-2
     betas: [0.9, 0.999]
   
   sched_kwargs:
-    milestones: [200, 300, 500]
+    milestones: [1000, 2000, 3000]
     gamma: 0.5
   
   logger_kwargs:
     filepath: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/datasets/2d/moi/log.txt
+    address: "127.0.0.1"
+    port: 8097
+    experiment_id: "Single video face parsing"
+    log_iters: 500
