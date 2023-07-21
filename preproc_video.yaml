@@ -11,10 +11,12 @@ video_dataset_kwargs:
 
 
 flame_pose_expression_optimization_kwargs:
+  optim_iters: 2000
+  log_result_only: true
   cam_init_z_trans: 0.5
 
   face_parsing_kwargs:
-    use_fan: true
+    use_fan: false
     mp_face_mesh_detector_kwargs:
       max_num_faces: 1
       min_detection_conf: 0.5
@@ -26,7 +28,7 @@ flame_pose_expression_optimization_kwargs:
   flame_model_cfg:
     flame_model_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/FLAME2023/flame2023.pkl
     batch_size: 1
-    use_face_contour: false
+    use_face_contour: true
     shape_params: 300
     expression_params: 100
     use_3D_translation: false
@@ -36,6 +38,9 @@ flame_pose_expression_optimization_kwargs:
     flame_masks: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/FLAME_masks/FLAME_masks.pkl
   
   loss_kwargs:
+    w_mp: 0.3
+    w_seg: 0.5
+    w_reg: 1.0
     wing_loss_kwargs: 
       omega: 10.0
       eps: 2.0
@@ -50,8 +55,8 @@ flame_pose_expression_optimization_kwargs:
     betas: [0.9, 0.999]
   
   sched_kwargs:
-    milestones: [1000, 2000, 3000]
-    gamma: 0.5
+    milestones: [200, 3000]
+    gamma: 0.1
   
   logger_kwargs:
     filepath: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/datasets/2d/moi/log.txt
