@@ -11,8 +11,8 @@ video_dataset_kwargs:
 
 
 flame_pose_expression_optimization_kwargs:
-  optim_iters: 500
-  log_result_only: false
+  optim_iters: 2000
+  log_result_only: true
   cam_init_z_trans: 0.5
 
   face_parsing_kwargs:

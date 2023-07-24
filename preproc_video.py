@@ -260,7 +260,7 @@ class FLAMEPoseExpressionOptimization:
         flame_mask_texture = self.create_flame_mask_texture()
         flame_renderer = Renderer(image.shape[1:3], self.device)
 
-        for iter in tqdm(range(self.optim_iters), total=self.optim_iters, desc=f"progress. init lr: {lr}"):
+        for iter in tqdm(range(self.optim_iters), total=self.optim_iters, desc=f"frame_progress. init lr: {lr}"):
             optim.zero_grad()
             cam_optim.zero_grad()
 
@@ -303,11 +303,9 @@ class FLAMEPoseExpressionOptimization:
         if self.log_result:
             self.logger.log_image_w_lmks(image.permute(0, 3, 1, 2), [mp_lmks_ref, mp_lmks2d], 'mediapipe lmks', radius=1)
             self.logger.log_image_w_lmks(image.permute(0, 3, 1, 2), [fan_lmks_ref, lmks2d], 'retina lmks', radius=1)
-            self.logger.log_image_w_lmks(rendered[..., 0:3].permute(0, 3, 1, 2), [fan_lmks_ref, lmks2d], 'retina lmks', radius=1)
 
             self.logger.log_image(rendered_mask[..., 0:3].permute(0, 3, 1, 2), 'rendered mask')
             self.logger.log_image(rendered[..., 0:3].permute(0, 3, 1, 2), 'rendered')
-            self.logger.log_image_w_lmks(rendered[..., 0:3].permute(0, 3, 1, 2), mp_lmks2d, 'lmks on flame', radius=1)
             self.logger.log_image(lebeled_mask.permute(0, 3, 1, 2), "face mask")
 
         self.prev_expression = expression_param.detach()
@@ -379,7 +377,7 @@ class IrisOptimization:
         optim = torch.optim.Adam([eye_pose_param], lr=self.optim_kwargs['lr'] * 0.1, betas=self.optim_kwargs['betas'])
         sched = torch.optim.lr_scheduler.MultiStepLR(optim, **self.sched_kwargs)
 
-        for iter in tqdm(range(self.optim_iters), total=self.optim_iters, desc="iris optimization"):
+        for iter in tqdm(range(self.optim_iters), total=self.optim_iters, desc="iris progress"):
             optim.zero_grad()
 
             verts, lmks, mp_lmks = self.flame_model(
@@ -473,6 +471,10 @@ class DataSaver:
         self.current_output_dir = os.path.join(self.output_base, self.video_id)
         if not os.path.exists(self.current_output_dir):
             os.mkdir(self.current_output_dir)
+
+    def set_frame_index(self, frame_idx):
+        self.curr_rgb_path = os.path.join(self.current_output_dir, self.video_id + f"_frm{frame_idx}.png")
+        self.curr_npz_path = os.path.join(self.current_output_dir, self.video_id + f"_frm{frame_idx}.npz")
     
     def save_state(self,
         frame_idx: int,
@@ -486,10 +488,10 @@ class DataSaver:
         cam_quaternion: torch.Tensor,
         cam_position: torch.Tensor,
     ):
-        rgb_path = os.path.join(self.current_output_dir, self.video_id + f"_frm{frame_idx}.png")
-        nir.save_image(rgb_path, rgb)
+        # rgb_path = os.path.join(self.current_output_dir, self.video_id + f"_frm{frame_idx}.png")
+        nir.save_image(self.curr_rgb_path, rgb)
 
-        npz_path = os.path.join(self.current_output_dir, self.video_id + f"_frm{frame_idx}.npz")
+        # npz_path = os.path.join(self.current_output_dir, self.video_id + f"_frm{frame_idx}.npz")
         npz_data = {
             "flame_shape": flame_shape,
             "flame_expression": flame_expression.cpu().numpy(),
@@ -500,8 +502,8 @@ class DataSaver:
             "cam_quaternion": cam_quaternion.cpu().numpy(),
             "cam_position": cam_position.cpu().numpy()
         }
-        with open(npz_path, 'wb') as outfd:
-            np.savez(npz_path, **npz_data)
+        with open(self.curr_npz_path, 'wb') as outfd:
+            np.savez(self.curr_npz_path, **npz_data)
 
 
 if __name__ == "__main__":
@@ -545,12 +547,29 @@ if __name__ == "__main__":
     for filename in filenames:
         if not filename.endswith('mp4'):
             continue
+
         filepath = os.path.join(conf.base_dir, filename)
         print(f"Processing file: {filename}")
         dataset = nir.get_dataset("SingleVideoDataset", filepath=filepath, preload=True)
 
         data_saver.set_output_state(filename.split('.')[0])
-        for frame_idx, data in tqdm(enumerate(dataset), total=len(dataset), desc="optimizing frame"):
+        
+        for frame_idx, data in tqdm(enumerate(dataset), total=len(dataset), desc="video progress"):
+            data_saver.set_frame_index(frame_idx)
+            if os.path.exists(data_saver.curr_rgb_path) and os.path.exists(data_saver.curr_npz_path):
+                print(f'current video frame has been optimized: {data_saver.current_output_dir}, frm: {frame_idx}')
+
+                # load prev_frame data and attach them to flame optimizer
+                with open(data_saver.curr_npz_path, 'rb') as infd:
+                    prev_data = np.load(infd)
+                    flame_optimizer.prev_camera_quat = torch.from_numpy(prev_data['cam_quaternion']).to(flame_optimizer.device)
+                    flame_optimizer.prev_camera_trans = torch.from_numpy(prev_data['cam_position']).to(flame_optimizer.device)
+                    flame_optimizer.prev_expression = torch.from_numpy(prev_data['flame_expression']).to(flame_optimizer.device)
+                    flame_optimizer.prev_eye_pose = torch.from_numpy(prev_data['flame_eyes_pose']).to(flame_optimizer.device)
+                    flame_optimizer.prev_global_rot = torch.from_numpy(prev_data['flame_pose'][..., 0:3]).to(flame_optimizer.device)
+                    flame_optimizer.prev_jaw_pose = torch.from_numpy(prev_data['flame_pose'][..., 3:]).to(flame_optimizer.device)
+                    flame_optimizer.prev_neck_pose = torch.from_numpy(prev_data['flame_neck_pose']).to(flame_optimizer.device)
+                continue
             # estimator needs numpy array
             image = (data.rgb.cpu().numpy() * 255).astype(np.uint8)
             # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
@@ -567,7 +586,6 @@ if __name__ == "__main__":
                 optimized_data['cam_quaternion'],
                 optimized_data['cam_position']
             )
-
             optimized_data['flame_eyes_pose'] = flame_eye_pose.detach().cpu().numpy()
             optimized_data['flame_shape'] = shapecode.detach().cpu().numpy()
             optimized_data['rgb'] = data.rgb
