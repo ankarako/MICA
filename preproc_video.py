@@ -265,6 +265,7 @@ class FLAMEPoseExpressionOptimization:
             cam_optim.zero_grad()
 
             # get shape and landmarks
+            # expression = torch.softmax(expression_param, dim=-1)
             pose_param = torch.cat([self.prev_global_rot, jaw_param], dim=-1)
             verts, lmks, mp_lmks = self.flame_model(self.shapecode, expression_param, pose_param, neck_pose_param, eye_pose_param)
 
@@ -377,7 +378,7 @@ class IrisOptimization:
         optim = torch.optim.Adam([eye_pose_param], lr=self.optim_kwargs['lr'] * 0.1, betas=self.optim_kwargs['betas'])
         sched = torch.optim.lr_scheduler.MultiStepLR(optim, **self.sched_kwargs)
 
-        for iter in tqdm(range(self.optim_iters), total=self.optim_iters, desc="iris progress"):
+        for iter in tqdm(range(500), total=500, desc="iris progress"):
             optim.zero_grad()
 
             verts, lmks, mp_lmks = self.flame_model(

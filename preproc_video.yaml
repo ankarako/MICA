@@ -39,8 +39,8 @@ flame_pose_expression_optimization_kwargs:
   
   loss_kwargs:
     w_mp: 0.3
-    w_seg: 0.5
-    w_reg: 1.0
+    w_seg: 0.6
+    w_reg: 0.5
     wing_loss_kwargs: 
       omega: 10.0
       eps: 2.0
@@ -55,7 +55,7 @@ flame_pose_expression_optimization_kwargs:
     betas: [0.9, 0.999]
   
   sched_kwargs:
-    milestones: [200, 3000]
+    milestones: [200, 1000, 1500]
     gamma: 0.1
   
   logger_kwargs:
