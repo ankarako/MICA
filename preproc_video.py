@@ -25,7 +25,7 @@ import yaml
 import nir
 
 from pytorch3d.renderer.cameras import FoVPerspectiveCameras
-from pytorch3d.transforms.rotation_conversions import quaternion_to_matrix, matrix_to_quaternion
+from pytorch3d.transforms.rotation_conversions import quaternion_to_matrix, matrix_to_quaternion, axis_angle_to_quaternion
 from pytorch3d.renderer import (MeshRasterizer, MeshRenderer, RasterizationSettings, BlendParams, HardFlatShader, SoftPhongShader, SoftGouraudShader, PointLights, TexturesVertex)
 from pytorch3d.structures import Meshes
 
@@ -124,15 +124,17 @@ class OptimizationLoss(torch.nn.Module):
         fan_lmks_tgt: torch.Tensor,
         seg_mask: torch.Tensor,
         seg_mask_tgt: torch.Tensor,
-        expresion_vector: torch.Tensor
+        expresion_vector: torch.Tensor,
+        iris_lmks: torch.Tensor=None,
+        iris_lmks_tgt: torch.Tensor=None,
     ) -> torch.Tensor:
         """"""
         mp_loss = self.wing_loss(mp_lmks, mp_lmks_tgt)
         fan_loss = self.wing_loss(fan_lmks, fan_lmks_tgt)
+        iris_loss = self.wing_loss(iris_lmks, iris_lmks_tgt) if iris_lmks is not None else torch.zeros([1] ,device=mp_lmks.device, dtype=torch.float32)
         
         seg_mask_loss = torch.abs(seg_mask - seg_mask_tgt).mean()
-        # expr_reg = self.expression_reg_loss(expresion_vector)
-        output = mp_loss * self.w_mp + fan_loss + seg_mask_loss * self.w_seg + expresion_vector.abs().mean() * self.w_reg
+        output = mp_loss * self.w_mp + fan_loss + iris_loss + seg_mask_loss * self.w_seg + expresion_vector.abs().mean() * self.w_reg
         return output
 
 
@@ -183,7 +185,10 @@ class FLAMEPoseExpressionOptimization:
         self.prev_eye_pose = torch.zeros([1, 6], device=self.device)
 
         self.prev_camera_trans = torch.tensor([[0.0, 0.0, self.cam_init_z_trans]], device=self.device)
-        self.prev_camera_quat = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=self.device)
+        # bring the camera in front of flame
+        rot = axis_angle_to_quaternion(torch.tensor([[0, torch.pi, 0]], device=self.device))
+        self.prev_camera_quat = rot
+        # self.prev_camera_quat = self.prev_camera_quat * torch.tensor([[0, 0.0, 0.0, torch.pi]], device=self.device)
 
     def reset(self, shapecode: torch.Tensor, retina_lmks: torch.Tensor):
         self.shapecode = shapecode.to(self.device).detach()
@@ -215,7 +220,7 @@ class FLAMEPoseExpressionOptimization:
         expression_param = torch.nn.Parameter(self.prev_expression.detach(), requires_grad=True)
         jaw_param = torch.nn.Parameter(self.prev_jaw_pose.detach(), requires_grad=True)
         neck_pose_param = torch.nn.Parameter(self.prev_neck_pose.detach(), requires_grad=True)
-        eye_pose_param = torch.nn.Parameter(self.prev_eye_pose.detach(), requires_grad=True)
+        eye_pose_param = self.prev_eye_pose.detach()
 
         camera_trans = torch.nn.Parameter(self.prev_camera_trans.detach(), requires_grad=True)
         camera_quat = torch.nn.Parameter(self.prev_camera_quat, requires_grad=True)
@@ -225,7 +230,7 @@ class FLAMEPoseExpressionOptimization:
         if not first_frame:
             lr = lr * 0.1
         optim = torch.optim.Adam(
-            [expression_param, jaw_param, neck_pose_param, eye_pose_param], 
+            [expression_param, jaw_param, neck_pose_param], 
             lr=lr, betas=betas
         )
         sched = torch.optim.lr_scheduler.MultiStepLR(optim, **self.sched_kwargs)
@@ -233,12 +238,20 @@ class FLAMEPoseExpressionOptimization:
         cam_optim = torch.optim.Adam([camera_trans, camera_quat], lr=lr, betas=betas)
         cam_sched = torch.optim.lr_scheduler.MultiStepLR(cam_optim, **self.sched_kwargs)
 
+        
+
         # estimate mediapipe landmarks
         mp_lmks_ref, fan_lmks_ref = self.face_parsing.parse_lmks((image * 255).to(torch.uint8))
+        iris_lmks_ref = self.face_parsing.parse_iris_lmlks(mp_lmks_ref)
         mp_lmks_ref = mp_lmks_ref[:, self.mp_flame_corr_idx, 0:2]
         mp_lmks_ref = self.lmks2d_to_screen(mp_lmks_ref, image.shape[1], image.shape[2]).clone().detach()
         fan_lmks_ref = fan_lmks_ref[..., 0:2].to(self.device)
-    
+
+        
+        iris_lmks_ref = iris_lmks_ref[..., 0:2]
+        iris_lmks_ref = self.lmks2d_to_screen(iris_lmks_ref, image.shape[1], image.shape[2]).clone().detach().to(self.device)
+        iris_lmks_center_ref = iris_lmks_ref[:, [0, 5], :]
+
         # get segmentation mask
         segmentation_mask, lebeled_mask = self.face_parsing.parse_mask((image[0].cpu().numpy() * 255).astype(np.uint8))
         lebeled_mask = torch.from_numpy((lebeled_mask / 255.0).astype(np.float32)).to(self.device)
@@ -253,6 +266,7 @@ class FLAMEPoseExpressionOptimization:
             # get shape and landmarks
             pose_param = torch.cat([self.prev_global_rot, jaw_param], dim=-1)
             verts, lmks, mp_lmks = self.flame_model(self.shapecode, expression_param, pose_param, neck_pose_param, eye_pose_param)
+            iris_lmks = verts[:, nir.k_iris_vert_idxs, :]
 
             # with the current camera extrinsics
             # transform landmarks to screen
@@ -260,12 +274,18 @@ class FLAMEPoseExpressionOptimization:
             cameras = FoVPerspectiveCameras(0.01, 1000, 1, R=rot, T=camera_trans).to(self.device)
             lmks2d = cameras.transform_points_screen(lmks, 1e-8, image_size=(image.shape[1], image.shape[2]))[..., 0:2]
             mp_lmks2d = cameras.transform_points_screen(mp_lmks, 1e-8, image_size=(image.shape[1], image.shape[2]))[..., 0:2]
-
+            iris_lmks2d = cameras.transform_points_screen(iris_lmks, 1e-8, image_size=(image.shape[1], image.shape[2]))[..., 0:2]
+            
             # render segmentation mask and debug view
             rendered, rendered_mask = flame_renderer.render(verts, self.flame_model.faces_tensor, cameras, flame_mask_texture)
 
             # compute los
-            loss = self.criterion(mp_lmks2d, mp_lmks_ref, lmks2d, fan_lmks_ref, rendered_mask[..., 0:3], lebeled_mask, expression_param)         
+            loss = self.criterion(
+                mp_lmks2d, mp_lmks_ref, 
+                lmks2d, fan_lmks_ref, 
+                rendered_mask[..., 0:3], lebeled_mask, 
+                expression_param
+            )         
             
             loss.backward(retain_graph=True)
             optim.step()
@@ -277,21 +297,58 @@ class FLAMEPoseExpressionOptimization:
                 self.logger.log_msg(f"{iter} | loss: {loss.detach().cpu().item()}")
                 self.logger.log_image_w_lmks(image.permute(0, 3, 1, 2), [mp_lmks_ref, mp_lmks2d], 'mediapipe lmks', radius=1)
                 self.logger.log_image_w_lmks(image.permute(0, 3, 1, 2), [fan_lmks_ref, lmks2d], 'retina lmks', radius=1)
-
+                self.logger.log_image_w_lmks(rendered[..., 0:3].permute(0, 3, 1, 2), [iris_lmks_center_ref, iris_lmks2d], 'retina lmks', radius=1)
                 self.logger.log_image(rendered_mask[..., 0:3].permute(0, 3, 1, 2), 'rendered mask')
-                self.logger.log_image(rendered[..., 0:3].permute(0, 3, 1, 2), 'rendered')
-                self.logger.log_image_w_lmks(rendered[..., 0:3].permute(0, 3, 1, 2), mp_lmks2d, 'lmks on flame', radius=1)
                 self.logger.log_image(lebeled_mask.permute(0, 3, 1, 2), "face mask")
         
+
+        eye_pose_param = torch.nn.Parameter(self.prev_eye_pose.clone().detach(), requires_grad=True)
+        eye_optim = torch.optim.Adam([eye_pose_param], lr=lr * 0.1, betas=betas)
+        eye_sched = torch.optim.lr_scheduler.MultiStepLR(eye_optim, **self.sched_kwargs)
+
+        expression_param = expression_param.clone().detach().requires_grad_(False)
+        pose_param = pose_param.clone().detach().requires_grad_(False)
+        neck_pose_param = neck_pose_param.clone().detach().requires_grad_(False)
+        rot = quaternion_to_matrix(camera_quat.clone().detach())
+        cameras = FoVPerspectiveCameras(0.01, 1000, 1, R=rot, T=camera_trans.clone().detach).to(self.device)
+
+        for iter in range(self.optim_iters):
+            eye_optim.zero_grad()
+
+            # get shape and landmarks
+            pose_param = torch.cat([self.prev_global_rot, jaw_param], dim=-1)
+            verts, lmks, mp_lmks = self.flame_model(
+                self.shapecode, 
+                expression_param, 
+                pose_param, 
+                neck_pose_param, 
+                eye_pose_param
+            )
+
+            iris_lmks = verts[:, nir.k_iris_vert_idxs, :]
+            iris_lmks2d = cameras.transform_points_screen(iris_lmks, 1e-8, image_size=(image.shape[1], image.shape[2]))[..., 0:2]
+
+            # compute los
+            iris_loss = self.criterion.wing_loss(iris_lmks2d, iris_lmks_center_ref)
+            
+            iris_loss.backward()
+            eye_optim.step()
+            eye_sched.step()
+
+            if (iter % self.logger.log_iters == 0) and not self.log_result:
+                self.logger.log_msg(f"{iter} | loss: {loss.detach().cpu().item()}")
+                self.logger.log_image_w_lmks(rendered[..., 0:3].permute(0, 3, 1, 2), [iris_lmks_center_ref, iris_lmks2d], 'retina lmks', radius=1)
+
+
         if self.log_result:
             self.logger.log_image_w_lmks(image.permute(0, 3, 1, 2), [mp_lmks_ref, mp_lmks2d], 'mediapipe lmks', radius=1)
             self.logger.log_image_w_lmks(image.permute(0, 3, 1, 2), [fan_lmks_ref, lmks2d], 'retina lmks', radius=1)
+            self.logger.log_image_w_lmks(rendered[..., 0:3].permute(0, 3, 1, 2), [fan_lmks_ref, lmks2d], 'retina lmks', radius=1)
 
             self.logger.log_image(rendered_mask[..., 0:3].permute(0, 3, 1, 2), 'rendered mask')
             self.logger.log_image(rendered[..., 0:3].permute(0, 3, 1, 2), 'rendered')
             self.logger.log_image_w_lmks(rendered[..., 0:3].permute(0, 3, 1, 2), mp_lmks2d, 'lmks on flame', radius=1)
             self.logger.log_image(lebeled_mask.permute(0, 3, 1, 2), "face mask")
-
         self.prev_expression = expression_param.detach()
         self.prev_global_rot = pose_param[:, 0:3].detach()
         self.prev_jaw_pose = pose_param[:, 3:].detach()
@@ -299,6 +356,16 @@ class FLAMEPoseExpressionOptimization:
         self.prev_eye_pose = eye_pose_param.detach()
         self.prev_camera_trans = camera_trans.detach()
         self.prev_camera_quat = camera_quat.detach()
+        # intrinsics = cameras.get_projection_transform()
+        return {
+            "camera_intrinsics": cameras.get_projection_transform()._matrix.detach(),
+            "camera_translation": camera_trans.detach(),
+            "camera_quaternion": camera_quat.detach(),
+            "flame_expression": expression_param.detach(),
+            "flame_pose": pose_param.detach(),
+            "flame_neck_pose": neck_pose_param.detach(),
+            "flame_eyes_pose": eye_pose_param.detach()
+        }
 
 
 
@@ -357,9 +424,50 @@ class MicaEstimator:
         lmk = self.mica.flame.compute_landmarks(meshes)
         return meshes[0].detach().cpu(), code, lmk
 
+class DataSaver:
+    def __init__(self, output_base: str, save_id_mesh: bool=True):
+        self.output_base = output_base
+        self.video_id = None
+        self.save_id_mesh = save_id_mesh
+    
+    def set_output_state(self, video_id: str):
+        self.video_id = video_id
+        self.current_output_dir = os.path.join(self.output_base, self.video_id)
+        if not os.path.exists(self.current_output_dir):
+            os.mkdir(self.current_output_dir)
+    
+    def save_state(self,
+        frame_idx: int,
+        rgb: torch.Tensor, 
+        flame_shape: torch.Tensor,
+        flame_expression: torch.Tensor,
+        flame_pose: torch.Tensor,
+        flame_neck_pose: torch.Tensor,
+        flame_eyes_pose: torch.Tensor,
+        camera_intrinsics: torch.Tensor,
+        camera_quaternion: torch.Tensor,
+        camera_translation: torch.Tensor,
+    ):
+        rgb_path = os.path.join(self.current_output_dir, self.video_id + f"_frm{frame_idx}.png")
+        nir.save_image(rgb_path, rgb)
+
+        npz_path = os.path.join(self.current_output_dir, self.video_id + f"_frm{frame_idx}.npz")
+        npz_data = {
+            "flame_shape": flame_shape,
+            "flame_expression": flame_expression.cpu().numpy(),
+            "flame_pose": flame_pose.cpu().numpy(),
+            "flame_neck_pose": flame_neck_pose.cpu().numpy(),
+            "flame_eyes_pose": flame_eyes_pose.cpu().numpy(),
+            "cam_intrinsics": camera_intrinsics.cpu().numpy(),
+            "cam_quaternion": camera_quaternion.cpu().numpy(),
+            "cam_position": camera_translation.cpu().numpy()
+        }
+        with open(npz_path, 'wb') as outfd:
+            np.savez(npz_path, **npz_data)
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("MICA video estimator")
+    parser = argparse.ArgumentParser("Celeb-VHQ-MICA preprocessing annotation")
     parser.add_argument("--conf", type=str, help="The path to the configuration file")
     args = parser.parse_args()
 
@@ -371,10 +479,9 @@ if __name__ == "__main__":
         conf = yaml.safe_load(infd)
     
     conf = nir.Struct(**conf)
-
-    output_dir = os.path.abspath(os.path.join(os.path.dirname(conf.input_video), os.path.basename(conf.input_video).replace(".mp4", ""))) if conf.output is None else conf.output
-    if not os.path.exists(output_dir):
-        os.mkdir(os.path.join(output_dir))
+    output_dir = conf.output_dir
+    data_saver = DataSaver(output_dir)
+    assert os.path.exists(output_dir)
 
     # create the estimators
     mica_estimator = MicaEstimator(**conf.mica_estimator_kwargs)
@@ -383,17 +490,33 @@ if __name__ == "__main__":
     # create dataset
     dataset = nir.get_dataset("SingleVideoDataset", **conf.video_dataset_kwargs)
 
+    # Get all video filepaths
+    filenames = os.listdir(conf.base_dir)
+    print("Starting preprocessing")
+    for filename in filenames:
+        filepath = os.path.join(conf.base_dir, filename)
+        print(f"Processing file: {filename}")
+        dataset = nir.get_dataset("SingleVideoDataset", filepath=filepath, preload=True)
 
-    for frame_idx in tqdm(enumerate(dataset), total=len(dataset), desc="optimizing frame"):
-        data = dataset.__getitem__(frame_idx)
-        # estimator needs numpy array
-        image = (data.rgb.cpu().numpy() * 255).astype(np.uint8)
-        # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        meshes, shapecode, lmks = mica_estimator.process(image)
+        data_saver.set_output_state(filename.split('.')[0])
+        for frame_idx, data in tqdm(enumerate(dataset), total=len(dataset), desc="optimizing frame"):
+            # estimator needs numpy array
+            image = (data.rgb.cpu().numpy() * 255).astype(np.uint8)
+            # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            meshes, shapecode, lmks = mica_estimator.process(image)
 
-        # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        flame_optimizer.reset(shapecode, lmks)
-        flame_optimizer.optimization_loop(image, True if frame_idx == 80 else False)
+            # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            flame_optimizer.reset(shapecode, lmks)
+            optimized_data = flame_optimizer.optimization_loop(image, True if frame_idx == 0 else False)
+            optimized_data['flame_shape'] = shapecode.detach().cpu().numpy()
+            optimized_data['rgb'] = data.rgb
+            optimized_data['frame_idx'] = frame_idx
 
-        # now optimize for expression and pose
-        trimesh.Trimesh(vertices=meshes.cpu() * 1000.0, faces=mica_estimator.faces, process=False).export(os.path.join(output_dir, "mesh.ply"))
+            print(f"saving data at: {data_saver.current_output_dir}")
+            data_saver.save_state(**optimized_data)
+        
+        if data_saver.save_id_mesh:
+            mesh_path = os.path.join(data_saver.current_output_dir, data_saver.video_id + ".ply")
+            trimesh.Trimesh(vertices=meshes.cpu().numpy() * 1000, faces=mica_estimator.faces, process=False).export(mesh_path)
+
+            

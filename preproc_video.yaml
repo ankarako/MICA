@@ -1,18 +1,18 @@
-input_video: '/media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/datasets/2d/moi/VID_20230719_121349884.mp4'
-output: null
+base_dir: '/media/perukas/Data/Datasets/2d-datasets/CelebV-HQ/downloaded_celebvhq/processed'
+output_dir: '/media/perukas/Data/Datasets/2d-datasets/CelebV-HQ-FLAME/'
 
 mica_estimator_kwargs:
-  chkp_path: "/media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/libs/MICA/data/pretrained/mica.tar"
+  chkp_path: "/media/perukas/Home/_dev/_phd/prjs/MICA/data/pretrained/mica.tar"
 
 video_dataset_kwargs:
-  filepath: '/media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/datasets/2d/moi/VID_20230719_121349884.mp4'
+  filepath: '/media/perukas/Data/Datasets/2d-datasets/CelebV-HQ/downloaded_celebvhq/processed/-2KG4lLGEl0_1.mp4'
   preload: true
   scale_factor: 2
 
 
 flame_pose_expression_optimization_kwargs:
-  optim_iters: 2000
-  log_result_only: true
+  optim_iters: 500
+  log_result_only: false
   cam_init_z_trans: 0.5
 
   face_parsing_kwargs:
@@ -22,20 +22,20 @@ flame_pose_expression_optimization_kwargs:
       min_detection_conf: 0.5
     face_segmentor_kwargs:
       threshold: 0.8
-      chkp: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/libs/face_parsing/ibug/face_parsing/rtnet/weights/rtnet50-fcn-11.torch
+      chkp: /media/perukas/Home/_dev/_phd/libraries/face_parsing/ibug/face_parsing/rtnet/weights/rtnet50-fcn-11.torch
       nclasses: 11
   
   flame_model_cfg:
-    flame_model_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/FLAME2023/flame2023.pkl
+    flame_model_path: /media/perukas/Home/_dev/_phd/3dmms/FLAME/data/FLAME2020/generic_model.pkl
     batch_size: 1
     use_face_contour: true
     shape_params: 300
     expression_params: 100
     use_3D_translation: false
-    static_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/flame_static_embedding.pkl
-    dynamic_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/flame_dynamic_embedding.npy
-    mediapipe_landmark_embedding_path: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/mediapipe_landmark_embedding/mediapipe_landmark_embedding.npz
-    flame_masks: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/3dmms/FLAME/FLAME_masks/FLAME_masks.pkl
+    static_landmark_embedding_path: /media/perukas/Home/_dev/_phd/3dmms/FLAME/data/flame_static_embedding.pkl
+    dynamic_landmark_embedding_path: /media/perukas/Home/_dev/_phd/3dmms/FLAME/data/flame_dynamic_embedding.npy
+    mediapipe_landmark_embedding_path: /media/perukas/Home/_dev/_phd/3dmms/FLAME/data/mediapipe_landmark_embedding/mediapipe_landmark_embedding.npz
+    flame_masks: /media/perukas/Home/_dev/_phd/3dmms/FLAME/data/FLAME_masks/FLAME_masks.pkl
   
   loss_kwargs:
     w_mp: 0.3
@@ -59,7 +59,7 @@ flame_pose_expression_optimization_kwargs:
     gamma: 0.1
   
   logger_kwargs:
-    filepath: /media/vcl3d/d1d61452-6b35-42dd-ad70-5036e8c2cfc8/ankarako/dev/datasets/2d/moi/log.txt
+    filepath: /media/perukas/Data/Datasets/2d-datasets/CelebV-HQ/downloaded_celebvhq/processed/log.txt
     address: "127.0.0.1"
     port: 8097
     experiment_id: "Single video face parsing"
