@@ -243,6 +243,8 @@ class FLAMEPoseExpressionOptimization:
 
         # estimate mediapipe landmarks
         mp_lmks_ref, fan_lmks_ref = self.face_parsing.parse_lmks((image * 255).to(torch.uint8))
+        if mp_lmks_ref is None:
+            return None, None
         iris_lmks_ref = self.face_parsing.parse_iris_lmlks(mp_lmks_ref)
         mp_lmks_ref = mp_lmks_ref[:, self.mp_flame_corr_idx, 0:2]
         mp_lmks_ref = self.lmks2d_to_screen(mp_lmks_ref, image.shape[1], image.shape[2]).clone().detach()
@@ -545,6 +547,7 @@ if __name__ == "__main__":
     # Get all video filepaths
     filenames = os.listdir(conf.base_dir)
     print("Starting preprocessing")
+    out_meshes=None
     for filename in filenames:
         if not filename.endswith('mp4'):
             continue
@@ -552,10 +555,11 @@ if __name__ == "__main__":
         filepath = os.path.join(conf.base_dir, filename)
         print(f"Processing file: {filename}")
         dataset = nir.get_dataset("SingleVideoDataset", filepath=filepath, preload=True)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, pin_memory=True, num_workers=1, collate_fn=nir.collate_fn)
 
         data_saver.set_output_state(filename.split('.')[0])
         
-        for frame_idx, data in tqdm(enumerate(dataset), total=len(dataset), desc="video progress"):
+        for frame_idx, data in tqdm(enumerate(dataloader), total=len(dataloader), desc="video progress"):
             data_saver.set_frame_index(frame_idx)
             if os.path.exists(data_saver.curr_rgb_path) and os.path.exists(data_saver.curr_npz_path):
                 print(f'current video frame has been optimized: {data_saver.current_output_dir}, frm: {frame_idx}')
@@ -574,13 +578,16 @@ if __name__ == "__main__":
             # estimator needs numpy array
             image = (data.rgb.cpu().numpy() * 255).astype(np.uint8)
             # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            meshes, shapecode, lmks = mica_estimator.process(image)
+            out_meshes, shapecode, lmks = mica_estimator.process(image[0])
 
             # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             flame_optimizer.reset(shapecode, lmks)
-            optimized_data, iris_lmks = flame_optimizer.optimization_loop(image, True if frame_idx == 0 else False)
+            optimized_data, iris_lmks = flame_optimizer.optimization_loop(image[0], True if frame_idx == 0 else False)
+            if optimized_data is None:
+                print("Failed to estimate landmarks.")
+                continue
             flame_eye_pose = iris_optimizer.optimization_loop(
-                image, iris_lmks, shapecode, 
+                image[0], iris_lmks, shapecode, 
                 optimized_data['flame_expression'], 
                 optimized_data['flame_pose'], 
                 optimized_data['flame_neck_pose'],
@@ -595,8 +602,8 @@ if __name__ == "__main__":
             print(f"saving data at: {data_saver.current_output_dir}")
             data_saver.save_state(**optimized_data)
         
-        if data_saver.save_id_mesh:
+        if data_saver.save_id_mesh and not os.path.exists(os.path.join(data_saver.current_output_dir, data_saver.video_id + ".ply")):
             mesh_path = os.path.join(data_saver.current_output_dir, data_saver.video_id + ".ply")
-            trimesh.Trimesh(vertices=meshes.cpu().numpy() * 1000, faces=mica_estimator.faces, process=False).export(mesh_path)
+            trimesh.Trimesh(vertices=out_meshes.cpu().numpy() * 1000, faces=mica_estimator.faces, process=False).export(mesh_path)
 
             

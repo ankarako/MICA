@@ -40,7 +40,7 @@ flame_pose_expression_optimization_kwargs:
   loss_kwargs:
     w_mp: 0.3
     w_seg: 0.6
-    w_reg: 0.5
+    w_reg: 0.7
     wing_loss_kwargs: 
       omega: 10.0
       eps: 2.0
