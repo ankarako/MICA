@@ -118,6 +118,30 @@ class OptimizationLoss(torch.nn.Module):
         
         return zero_mean_vector.mean()
 
+    def eye_dis(self, fan_lmks: torch.Tensor) -> torch.Tensor:
+        eye_up = fan_lmks[:, [37, 38, 43, 44], :]
+        eye_bottom = fan_lmks[:, [41, 40, 47, 46], :]
+        dis = torch.sqrt(((eye_up - eye_bottom) ** 2).sum(dim=-1))
+        return dis
+    
+    def lip_dis(self, fan_lmks: torch.Tensor) -> torch.Tensor:
+        lip_up = fan_lmks[:, [61, 62, 63], :]
+        lip_bottom = fan_lmks[:, [67, 66, 65], :]
+        dis = torch.sqrt(((lip_up - lip_bottom) ** 2).sum(dim=-1))
+        return dis
+    
+    def eye_loss(self, lmks, lmks_tgt):
+        pred_dis = self.eye_dis(lmks)
+        tgt_dis = self.eye_dis(lmks_tgt)
+        loss = (pred_dis - tgt_dis).abs().mean()
+        return loss
+    
+    def lip_loss(self, lmks, lmks_tgt):
+        pred_dis = self.lip_dis(lmks)
+        tgt_dis = self.lip_dis(lmks_tgt)
+        loss = (pred_dis - tgt_dis).abs().mean()
+        return loss
+
     def forward(
         self, 
         mp_lmks: torch.Tensor, 
@@ -131,15 +155,16 @@ class OptimizationLoss(torch.nn.Module):
         iris_lmks_tgt: torch.Tensor=None,
     ) -> torch.Tensor:
         """"""
-        mp_loss = l2_loss(mp_lmks, mp_lmks_tgt)
-        fan_loss = l2_loss(fan_lmks, fan_lmks_tgt)
-        iris_loss = l2_loss(iris_lmks, iris_lmks_tgt) if iris_lmks is not None else torch.zeros([1] ,device=mp_lmks.device, dtype=torch.float32)
+        mp_loss = self.wing_loss(mp_lmks, mp_lmks_tgt)
+        fan_loss = self.wing_loss(fan_lmks, fan_lmks_tgt)
+        iris_loss = self.wing_loss(iris_lmks, iris_lmks_tgt) if iris_lmks is not None else torch.zeros([1] ,device=mp_lmks.device, dtype=torch.float32)
         
-        seg_mask_loss = torch.abs(seg_mask - seg_mask_tgt).mean()
+        # seg_mask_loss = torch.abs(seg_mask - seg_mask_tgt).mean()
 
-        expression_reg = torch.mean(torch.square(expression_vector)) * self.w_reg
-        expression_reg += torch.mean(torch.square(expression_vector[1:] - expression_vector[:-1])) * 1e-1
-        output = mp_loss * self.w_mp + fan_loss + iris_loss + seg_mask_loss * self.w_seg + expression_reg
+        expression_reg = torch.mean(torch.square(expression_vector)) * 1e-1
+        eye_loss = self.eye_loss(fan_lmks, fan_lmks_tgt) * 1e-1
+        lip_loss = self.lip_loss(fan_lmks, fan_lmks_tgt) * 1e-1
+        output = mp_loss + fan_loss * self.w_mp + iris_loss + expression_reg + eye_loss + lip_loss
         return output
 
 
@@ -233,7 +258,7 @@ class FLAMEPoseExpressionOptimization:
         lr = self.optim_kwargs['lr']
         betas = self.optim_kwargs['betas']
         if not first_frame:
-            lr = lr * 0.1
+            lr = lr * 1.0e-2
 
         # flame optimizer
         optim = torch.optim.Adam(
