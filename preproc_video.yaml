@@ -11,7 +11,7 @@ video_dataset_kwargs:
 
 
 flame_pose_expression_optimization_kwargs:
-  optim_iters: 2000
+  optim_iters: 1000
   log_result_only: true
   cam_init_z_trans: 0.5
 
@@ -40,7 +40,7 @@ flame_pose_expression_optimization_kwargs:
   loss_kwargs:
     w_mp: 0.3
     w_seg: 0.6
-    w_reg: 0.7
+    w_reg: 0.8
     wing_loss_kwargs: 
       omega: 10.0
       eps: 2.0
@@ -55,7 +55,7 @@ flame_pose_expression_optimization_kwargs:
     betas: [0.9, 0.999]
   
   sched_kwargs:
-    milestones: [200, 1000, 1500]
+    milestones: [200, 800, 1500]
     gamma: 0.1
   
   logger_kwargs:
@@ -64,3 +64,7 @@ flame_pose_expression_optimization_kwargs:
     port: 8097
     experiment_id: "Single video face parsing"
     log_iters: 500
+
+matting_kwargs:
+  script_path: /media/perukas/Home/_dev/_phd/libraries/RobustVideoMatting/inference.py
+  chkp_path: /media/perukas/Home/_dev/_phd/libraries/RobustVideoMatting/weights/rvm_mobilenetv3.pth

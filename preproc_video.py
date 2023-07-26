@@ -5,7 +5,7 @@ import random
 from glob import glob
 from pathlib import Path
 
-import cv2
+import sys
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
@@ -83,6 +83,8 @@ class Renderer:
 
         return debug_view, None
 
+def l2_loss(inputs: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    return torch.sqrt(((inputs - target) ** 2).sum(dim=-1)).mean(dim=1).mean()
 
 class OptimizationLoss(torch.nn.Module):
     def __init__(
@@ -124,17 +126,20 @@ class OptimizationLoss(torch.nn.Module):
         fan_lmks_tgt: torch.Tensor,
         seg_mask: torch.Tensor,
         seg_mask_tgt: torch.Tensor,
-        expresion_vector: torch.Tensor,
+        expression_vector: torch.Tensor,
         iris_lmks: torch.Tensor=None,
         iris_lmks_tgt: torch.Tensor=None,
     ) -> torch.Tensor:
         """"""
-        mp_loss = self.wing_loss(mp_lmks, mp_lmks_tgt)
-        fan_loss = self.wing_loss(fan_lmks, fan_lmks_tgt)
-        iris_loss = self.wing_loss(iris_lmks, iris_lmks_tgt) if iris_lmks is not None else torch.zeros([1] ,device=mp_lmks.device, dtype=torch.float32)
+        mp_loss = l2_loss(mp_lmks, mp_lmks_tgt)
+        fan_loss = l2_loss(fan_lmks, fan_lmks_tgt)
+        iris_loss = l2_loss(iris_lmks, iris_lmks_tgt) if iris_lmks is not None else torch.zeros([1] ,device=mp_lmks.device, dtype=torch.float32)
         
         seg_mask_loss = torch.abs(seg_mask - seg_mask_tgt).mean()
-        output = mp_loss * self.w_mp + fan_loss + iris_loss + seg_mask_loss * self.w_seg + expresion_vector.abs().mean() * self.w_reg
+
+        expression_reg = torch.mean(torch.square(expression_vector)) * self.w_reg
+        expression_reg += torch.mean(torch.square(expression_vector[1:] - expression_vector[:-1])) * 1e-1
+        output = mp_loss * self.w_mp + fan_loss + iris_loss + seg_mask_loss * self.w_seg + expression_reg
         return output
 
 
@@ -463,6 +468,23 @@ class MicaEstimator:
         lmk = self.mica.flame.compute_landmarks(meshes)
         return meshes[0].detach().cpu(), code, lmk
 
+
+class Matting:
+    def __init__(self, script_path: str, chkp_path: str):
+        self.script_path = script_path
+        self.chkp_path = chkp_path
+    
+    def convert(self, video_path: str, output_mask_path: str):
+        args = "--variant mobilenetv3 " 
+        args += f"--checkpoint {self.chkp_path} " 
+        args += f"--input-source {video_path} "
+        args += "--output-type png_sequence "
+        args += f"--output-alpha {output_mask_path} "
+        args += "--device cuda"
+        cmd = f"python {self.script_path} {args}"
+        os.system(cmd)
+
+
 class DataSaver:
     def __init__(self, output_base: str, save_id_mesh: bool=True):
         self.output_base = output_base
@@ -541,6 +563,7 @@ if __name__ == "__main__":
         'cuda:0'
     )
 
+    matting = Matting(**conf.matting_kwargs)
     # create dataset
     # dataset = nir.get_dataset("SingleVideoDataset", **conf.video_dataset_kwargs)
 
@@ -551,6 +574,8 @@ if __name__ == "__main__":
     for filename in filenames:
         if not filename.endswith('mp4'):
             continue
+            
+        
 
         filepath = os.path.join(conf.base_dir, filename)
         print(f"Processing file: {filename}")
@@ -558,6 +583,11 @@ if __name__ == "__main__":
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, pin_memory=True, num_workers=1, collate_fn=nir.collate_fn)
 
         data_saver.set_output_state(filename.split('.')[0])
+
+        # preprocess whole video with matting
+        matting_alpha_path = data_saver.current_output_dir
+        print("estimating alpha masks")
+        matting.convert(filepath, matting_alpha_path)
         
         for frame_idx, data in tqdm(enumerate(dataloader), total=len(dataloader), desc="video progress"):
             data_saver.set_frame_index(frame_idx)
