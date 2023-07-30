@@ -610,7 +610,9 @@ if __name__ == "__main__":
         data_saver.set_output_state(filename.split('.')[0])
 
         # preprocess whole video with matting
-        matting_alpha_path = data_saver.current_output_dir
+        matting_alpha_path = os.path.join(data_saver.current_output_dir, 'matting')
+        os.makedirs(matting_alpha_path, exist_ok=True)
+        
         print("estimating alpha masks")
         matting.convert(filepath, matting_alpha_path)
         
